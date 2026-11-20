@@ -376,6 +376,61 @@ class TestBSpline:
         xx = np.linspace(t[k], t[-k-1], 20)
         xp_assert_close(b(xx), _sum_basis_elements(xx, t, c, k), atol=1e-14)
 
+    @pytest.mark.parametrize("extrapolate", [True, False])
+    def test_basis_element_right_endpoint(self, extrapolate):
+        # gh-20888: at the right end of the base interval, basis_element
+        # returned 0 for the last element of a clamped knot vector (whose
+        # last knot has multiplicity k+1), while the full BSpline returns
+        # the limit from the left, 1.
+        k = 3
+        ti = np.arange(6.)
+        t = np.r_[[ti[0]]*k, ti, [ti[-1]]*k]
+        nsplines = t.size - k - 1
+        xx = np.linspace(t[k], t[-k-1], 51)    # includes both endpoints
+        total = np.zeros_like(xx)
+        for j in range(nsplines):
+            tj = t[j:j+k+2]
+            b = BSpline.basis_element(tj, extrapolate=extrapolate)
+            c = np.zeros(nsplines)
+            c[j] = 1.
+            b_full = BSpline(t, c, k, extrapolate=extrapolate)
+            # compare on the support of the element, including its endpoints
+            x = xx[(xx >= tj[0]) & (xx <= tj[-1])]
+            xp_assert_close(b(x), b_full(x), atol=1e-14)
+            # zero out out-of-bounds elements
+            b0 = BSpline.basis_element(tj, extrapolate=False)
+            total += np.nan_to_num(b0(xx))
+        # partition of unity on the closed base interval
+        xp_assert_close(total, np.ones_like(xx), atol=1e-14)
+
+        # B(x | 4, 5, 5, 5, 5) = (x - 4)**3 on [4, 5]
+        b = BSpline.basis_element([4, 5, 5, 5, 5], extrapolate=extrapolate)
+        xp_assert_close(b(5.), np.asarray(1.), atol=1e-14)
+        xp_assert_close(b(5., nu=1), np.asarray(3.), atol=1e-14)
+        if not extrapolate:
+            assert np.isnan(b(5.5))
+
+        # if the last knot is simple, B is continuous and vanishes there
+        b = BSpline.basis_element([0, 1, 2, 3, 4], extrapolate=extrapolate)
+        xp_assert_close(b(4.), np.asarray(0.), atol=1e-14)
+
+    @pytest.mark.parametrize("extrapolate", [True, False])
+    def test_repeated_knot_at_right_endpoint(self, extrapolate):
+        # gh-20888: if the right end of the base interval, t[n], is a repeated
+        # knot with t[n-1] == t[n], the value at t[n] is the limit from the
+        # left, not zero.
+        t = np.array([0., 0., 1., 1., 2.])
+        c = np.array([1., 2., 3.])
+        k = 1
+        b = BSpline(t, c, k, extrapolate=extrapolate)
+        # base interval is [0, 1]; on it, B = 1 + x
+        xp_assert_close(b([0., 0.5, 1. - 1e-12, 1.]),
+                        np.asarray([1., 1.5, 2., 2.]), atol=1e-11)
+        # the design matrix agrees with __call__
+        x = np.array([0., 0.5, 1.])
+        dm = BSpline.design_matrix(x, t, k, extrapolate=extrapolate)
+        xp_assert_close(dm.toarray() @ c, b(x), atol=1e-14)
+
     def test_cmplx(self):
         b = _make_random_spline()
         t, c, k = b.tck

@@ -113,8 +113,21 @@ _find_interval(const double* tptr, int64_t len_t,
     while ((xval >= t(l)) && (l != n)) {
         l += 1;
     }
+    l -= 1;
 
-    return l-1;
+    // The base interval is closed on the right: at xval == te, use the limit
+    // from the left. If te is a repeated knot, t[l] == t[l+1] == te is a
+    // zero-length interval, so step back to the last interval of nonzero
+    // length (gh-20888). For k = 0 the zero-length interval is meaningful
+    // (e.g. zero-order interpolation uses it for the last data point), so
+    // leave it alone.
+    if ((k > 0) && (xval == te)) {
+        while ((l > k) && (t(l) == t(l+1))) {
+            l -= 1;
+        }
+    }
+
+    return l;
 }
 
 
